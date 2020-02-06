@@ -1,0 +1,79 @@
+{
+    "widgets": [
+        {
+            "type": "metric",
+            "x": 0,
+            "y": 15,
+            "width": 24,
+            "height": 6,
+            "properties": {
+                "metrics": [
+                    [ "AWS/SQS", "NumberOfEmptyReceives", "QueueName", "MARS-Queue", { "label": "Empty Receives" } ],
+                    [ ".", "NumberOfMessagesDeleted", ".", ".", { "label": "Number Of Messages Deleted" } ],
+                    [ ".", "ApproximateNumberOfMessagesDelayed", ".", ".", { "label": "Approximate Messages Delayed" } ],
+                    [ ".", "NumberOfMessagesSent", ".", ".", { "label": "Messages Sent" } ],
+                    [ ".", "ApproximateNumberOfMessagesNotVisible", ".", ".", { "label": "Approximate Messages Not Visible" } ],
+                    [ ".", "NumberOfMessagesReceived", ".", ".", { "label": "Messages Received" } ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "stat": "Sum",
+                "period": 60,
+                "title": "Queue"
+            }
+        },
+        {
+            "type": "metric",
+            "x": 0,
+            "y": 27,
+            "width": 24,
+            "height": 6,
+            "properties": {
+                "metrics": [
+                    [ "AWS/DynamoDB", "ConsumedWriteCapacityUnits", "TableName", "MARS-MultiPartUploads", { "label": "Consumed Write Capacity Units" } ],
+                    [ ".", "ConsumedReadCapacityUnits", ".", ".", { "label": "Consumed Read Capacity Units" } ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "stat": "Sum",
+                "period": 60,
+                "title": "Multipart Upload Table"
+            }
+        },
+        {
+            "type": "metric",
+            "x": 0,
+            "y": 2,
+            "width": 24,
+            "height": 6,
+            "properties": {
+                "metrics": [
+                    [ "AWS/Lambda", "Throttles", "FunctionName", "MARS-QueueProcessor", { "label": "Queue Processor Throttles" } ],
+                    [ ".", "Errors", ".", ".", { "label": "Queue Processor Errors" } ],
+                    [ ".", "Invocations", ".", ".", { "label": "Queue Processor Invocations" } ],
+                    [ ".", "Errors", ".", "MARS-StreamProcessor", { "label": "Stream Processor Errors" } ],
+                    [ ".", "Throttles", ".", ".", { "label": "Stream Processor Throttles" } ],
+                    [ ".", "Invocations", ".", ".", { "label": "Stream Processor Invocations" } ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "stat": "Sum",
+                "period": 60,
+                "title": "Queue and Stream Processing Functions"
+            }
+        },
+        {
+            "type": "text",
+            "x": 0,
+            "y": 0,
+            "width": 24,
+            "height": 1,
+            "properties": {
+                "markdown": "\n# MARS Base Regional Resources (${AWS::Region})\n"
+            }
+        }
+    ]
+}

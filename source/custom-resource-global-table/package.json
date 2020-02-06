@@ -1,0 +1,33 @@
+{
+    "name": "custom-resource-global-table",
+    "version": "1.0.0",
+    "description": "",
+    "main": "index.js",
+    "scripts": {
+        "pretest": "npm install",
+        "test": "mocha lib/*.spec.js",
+        "build-init": "rm -rf dist && rm -f archive.zip && mkdir dist",
+        "build:copy": "cp index.js dist/",
+        "build:install": "cp package.json dist/ && cd dist && npm install --production",
+        "build": "npm-run-all -s build-init build:copy build:install",
+        "zip": "cd dist && zip -rq custom-resource-global-table.zip ."
+    },
+    "dependencies": {},
+    "devDependencies": {
+        "aws-sdk": "*",
+        "grunt": "^0.4.5",
+        "grunt-aws-lambda": "^0.13.0",
+        "grunt-pack": "0.1.*",
+        "grunt-contrib-clean": "*",
+        "chai": "*",
+        "sinon": "*",
+        "sinon-chai": "*",
+        "mocha": "*",
+        "aws-sdk-mock": "*",
+        "npm-run-all": "*"
+    },
+    "author": {
+        "name": "aws-solutions-builder"
+    },
+    "license": "ASL"
+}

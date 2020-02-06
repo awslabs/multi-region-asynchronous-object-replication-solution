@@ -1,0 +1,358 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Parameters": 
+    {
+        "DashboardName": {
+          "Type": "String",
+          "Default": "MARS-Base-Regional-Resources"
+        },
+        "CodeBucketBaseName": {
+            "Type": "String",
+            "Description": "The S3 code bucket base name (excluding -region) where the Lambda code is stored."           
+        },
+        "CodeKeyBase": {
+            "Type": "String",
+            "Description": "The S3 base prefix where the Lambda source code is stored."
+        },
+        "ParallelStackSetRoleArn": {
+            "Type": "String"
+        },
+        "StreamProcessorRoleArn": {
+            "Type": "String"
+        },
+        "QueueProcessorRoleArn": {
+            "Type": "String"
+        }
+    },
+    "Resources": {
+        "KeyAlias": {
+          "Type" : "AWS::KMS::Alias",
+          "Properties" : {
+              "AliasName" : "alias/mars",
+              "TargetKeyId" : {"Ref": "Key"}
+            }
+        },
+        "Key": {
+            "Type": "AWS::KMS::Key",
+            "Properties": {
+                "Description": "CMK used by the MARS service.",
+                "KeyUsage": "ENCRYPT_DECRYPT",
+                "KeyPolicy": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Sid": "S3CanPublishEventsToQueue",
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": "s3.amazonaws.com"
+                            },
+                            "Action": [
+                                "kms:GenerateDataKey",
+                                "kms:Decrypt"
+                            ],
+                            "Resource": "*"
+                        },
+                        {
+                            "Sid": "Allow access for Key Administrators",
+                            "Effect": "Allow",
+                            "Principal": {
+                                "AWS": [
+                                    {"Fn::Sub": "arn:aws:iam::${AWS::AccountId}:root"},
+                                    {"Ref": "ParallelStackSetRoleArn"}
+                                ]
+                            },
+                            "Action": [
+                                "kms:Create*",
+                                "kms:Describe*",
+                                "kms:Enable*",
+                                "kms:List*",
+                                "kms:Put*",
+                                "kms:Update*",
+                                "kms:Revoke*",
+                                "kms:Disable*",
+                                "kms:Get*",
+                                "kms:Delete*",
+                                "kms:TagResource",
+                                "kms:UntagResource",
+                                "kms:ScheduleKeyDeletion",
+                                "kms:CancelKeyDeletion"
+                            ],
+                            "Resource": "*"
+                        },
+                        {
+                            "Sid": "Allow use of the key",
+                            "Effect": "Allow",
+                            "Principal": {
+                                "AWS": [
+                                    {"Ref": "StreamProcessorRoleArn"},
+                                    {"Ref": "QueueProcessorRoleArn"}
+                                ]
+                            },
+                            "Action": [
+                                "kms:Encrypt",
+                                "kms:Decrypt",
+                                "kms:ReEncrypt*",
+                                "kms:GenerateDataKey*",
+                                "kms:DescribeKey"
+                            ],
+                            "Resource": "*"
+                        },
+                        {
+                            "Sid": "Allow attachment of persistent resources",
+                            "Effect": "Allow",
+                            "Principal": {
+                                "AWS": [
+                                    {"Ref": "StreamProcessorRoleArn"},
+                                    {"Ref": "QueueProcessorRoleArn"}
+                                ]
+                            },
+                            "Action": [
+                                "kms:CreateGrant",
+                                "kms:ListGrants",
+                                "kms:RevokeGrant"
+                            ],
+                            "Resource": "*",
+                            "Condition": {
+                                "Bool": {
+                                    "kms:GrantIsForAWSResource": "true"
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        "QueuePolicy": {
+            "Type": "AWS::SQS::QueuePolicy",
+            "Properties": {
+                "Queues": [
+                    {
+                        "Ref": "Queue"
+                    }
+                ],
+                "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Id": "MARSQueyPolicy",
+                    "Statement": [
+                        {
+                            "Sid": "1",
+                            "Effect": "Allow",
+                            "Principal": {
+                                "AWS": {"Ref": "AWS::AccountId"},
+                                "Service": "s3.amazonaws.com"
+                            },
+                            "Action": [
+                                "sqs:*"
+                            ],
+                            "Resource": {
+                                "Fn::GetAtt": [
+                                    "Queue",
+                                    "Arn"
+                                ]
+                            },
+                            "Condition": {
+                                "ArnLike": {
+                                    "aws:SourceArn": {
+                                        "Fn::Sub": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:MARS-*"
+                                    },
+                                    "aws:SourceArn": {
+                                        "Fn::Sub": "arn:aws:s3:*:*:mars-*-${AWS::Region}"
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        "Queue": {
+            "Type": "AWS::SQS::Queue",
+            "Properties": {
+                "KmsMasterKeyId": "alias/mars",
+                "RedrivePolicy": {
+                    "maxReceiveCount": 10,
+                    "deadLetterTargetArn": {
+                        "Fn::GetAtt": [
+                            "DLQueue",
+                            "Arn"
+                        ]
+                    }
+                },
+                "VisibilityTimeout": 240,
+                "QueueName": {
+                    "Fn::Sub": "MARS-Queue"
+                }
+            }
+        },
+        "QueueProcessor": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "Runtime": "nodejs10.x",
+                "Role": {
+                    "Ref": "QueueProcessorRoleArn"
+                },
+                "FunctionName": "MARS-QueueProcessor",
+                "Handler": "index.handler",
+                "Timeout": 240,
+                "MemorySize": 128,
+                "Code": {
+                  "S3Bucket": {"Fn::Sub": "${CodeBucketBaseName}-${AWS::Region}"},
+                    "S3Key": {"Fn::Sub": "${CodeKeyBase}queue-processor.zip"}
+                },
+                "Environment": {
+                    "Variables" : { "MultiPartUploadsTableName": {"Ref": "MultiPartUploadsTable"} }
+                }
+            }
+        },
+        "QueueSubscription": {
+            "Type": "AWS::Lambda::EventSourceMapping",
+            "Properties": {
+                "BatchSize": 10,
+                "Enabled": true,
+                "FunctionName": {
+                    "Ref": "QueueProcessor"
+                },
+                "EventSourceArn": {
+                    "Fn::GetAtt": [
+                        "Queue",
+                        "Arn"
+                    ]
+                }
+            }
+        },
+        "StreamProcessor": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "Runtime": "nodejs10.x",
+                "Role": {
+                    "Ref": "StreamProcessorRoleArn"
+                },
+                "FunctionName": "MARS-StreamProcessor",
+                "Handler": "index.handler",
+                "Timeout": 900,
+                "MemorySize": 128,
+                "Code": {
+                  "S3Bucket": {"Fn::Sub": "${CodeBucketBaseName}-${AWS::Region}"},
+                    "S3Key": {"Fn::Sub": "${CodeKeyBase}stream-processor.zip"}
+                },
+                "Environment": {
+                    "Variables" : { 
+                        "QueueUrl": {"Ref": "Queue"},
+                        "MultiPartUploadsTableName": {"Ref": "MultiPartUploadsTable"} }
+                }
+            }
+        },
+        "DLQueue": {
+            "Type": "AWS::SQS::Queue",
+            "Properties": {
+                "KmsMasterKeyId": "alias/mars",
+                "QueueName": "MARS-DLQueue"
+            }
+        },
+        "MultiPartUploadsTable": {
+            "Type": "AWS::DynamoDB::Table",
+            "Properties": {
+                "TableName": "MARS-MultiPartUploads",
+                "KeySchema": [
+                    {
+                        "AttributeName": "Key",
+                        "KeyType": "HASH"
+                    },
+                    {
+                        "AttributeName": "JournalItemHash",
+                        "KeyType": "RANGE"
+                    }
+                ],
+                "AttributeDefinitions": [
+                    {
+                        "AttributeName": "Key",
+                        "AttributeType": "S"
+                    },
+                    {
+                        "AttributeName": "JournalItemHash",
+                        "AttributeType": "S"
+                    }
+                ],
+                "BillingMode": "PAY_PER_REQUEST",
+                "TimeToLiveSpecification": {
+                    "AttributeName": "Expire",
+                    "Enabled": true
+                }
+            }
+        },
+        "MARSQueueProcessorErrorAlert": {
+            "Type": "AWS::CloudWatch::Alarm",
+            "Properties": {
+                "AlarmName": {"Fn::Sub": "${QueueProcessor}-Errors"},
+                "ComparisonOperator": "GreaterThanThreshold",
+                "EvaluationPeriods": 1,
+                "Period": 60,
+                "Statistic": "Minimum",
+                "Namespace": "AWS/Lambda",
+                "MetricName": "Errors",
+                "Threshold": 0,
+                "Dimensions": [
+                    {
+                        "Name": "FunctionName",
+                        "Value": {"Ref": "QueueProcessor"}
+                    }
+                ],
+                "AlarmActions": [
+                    {"Ref": "MARSErrorTopic"}
+                ]
+            }
+        }, 
+        "MARSStreamProcessorErrorAlert": {
+            "Type": "AWS::CloudWatch::Alarm",
+            "Properties": {
+                "AlarmName": {"Fn::Sub": "${StreamProcessor}-Errors"},
+                "ComparisonOperator": "GreaterThanThreshold",
+                "EvaluationPeriods": 1,
+                "Period": 60,
+                "Statistic": "Minimum",
+                "Namespace": "AWS/Lambda",
+                "MetricName": "Errors",
+                "Threshold": 0,
+                "Dimensions": [
+                    {
+                        "Name": "FunctionName",
+                        "Value": {"Ref": "StreamProcessor"}
+                    }
+                ],
+                "AlarmActions": [
+                    {"Ref": "MARSErrorTopic"}
+                ]
+            }
+        },
+        "MARSErrorTopic": {
+          "Type": "AWS::SNS::Topic",
+          "Properties": {
+            "TopicName": "MARS-Errors"
+          }
+        },
+        "MARSErrorTopicPolicy": {
+          "Type": "AWS::SNS::TopicPolicy",
+          "Properties": {
+            "Topics": [ {"Ref": "MARSErrorTopic"} ],
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                  {
+                      "Effect": "Allow",
+                      "Principal": {
+                            "Service": "cloudwatch.amazonaws.com"
+                        },
+                      "Action": "SNS:Publish",
+                      "Resource": {"Ref": "MARSErrorTopic"},
+                      "Condition": {
+                        "StringEquals": {
+                          "AWS:SourceOwner": {"Ref": "AWS::AccountId"}
+                        }
+                      }
+                  }
+              ]
+            }
+          }
+        }
+    }
+}

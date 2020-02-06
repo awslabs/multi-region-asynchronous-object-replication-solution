@@ -1,0 +1,104 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Parameters": {
+        "BaseName": {
+            "Type": "String",
+            "Description": "The base name used for buckets. Region code will be appended for each region used."
+        },
+        "MetricsConfigurationName":
+        {
+            "Type": "String",
+            "Description": "Use the value EntireBucket to enable metrics on S3 buckets.",
+            "Default": "NoMetrics"
+        }
+    },
+    "Resources": {
+        "Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+                "BucketName": {
+                    "Fn::Sub": "mars-${BaseName}-${AWS::Region}"
+                },
+                "PublicAccessBlockConfiguration" : {
+                    "BlockPublicAcls": true,
+                    "BlockPublicPolicy": true,
+                    "IgnorePublicAcls": true,
+                    "RestrictPublicBuckets": true
+                },  
+                "BucketEncryption": {
+                    "ServerSideEncryptionConfiguration": [
+                        {
+                            "ServerSideEncryptionByDefault": {
+                                "SSEAlgorithm": "aws:kms"
+                            }       
+                        }
+                    ]
+                },
+                "MetricsConfigurations": [{
+                  "Id": {"Ref": "MetricsConfigurationName"}  
+                }],
+                "NotificationConfiguration": {
+                    "QueueConfigurations": [
+                        {
+                            "Queue": {
+                               "Fn::Sub": "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:MARS-Queue"
+                            },
+                            "Event": "s3:ObjectCreated:*"
+                        },
+                        {
+                            "Queue": {
+                                "Fn::Sub": "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:MARS-Queue"
+                            },
+                            "Event": "s3:ObjectRemoved:*"
+                        }
+                    ]
+                }
+            }
+        },
+        "StreamSubscription": {
+            "Type": "AWS::Lambda::EventSourceMapping",
+            "Properties": {
+                "BatchSize": 1000,
+                "StartingPosition": "LATEST",
+                "Enabled": true,
+                "FunctionName": {
+                    "Fn::Sub": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:MARS-StreamProcessor"
+                },
+                "EventSourceArn": {
+                    "Fn::GetAtt": [
+                        "DynamoDBTable",
+                        "StreamArn"
+                    ]
+                }
+            }
+        },
+        "DynamoDBTable": {
+            "Type": "AWS::DynamoDB::Table",
+            "Properties": {
+                "TableName": {
+                    "Fn::Sub": "mars-${BaseName}-journal"
+                },
+                "KeySchema": [
+                    {
+                        "AttributeName": "Key",
+                        "KeyType": "HASH"
+                    }
+                ],
+                "AttributeDefinitions": [
+                    {
+                        "AttributeName": "Key",
+                        "AttributeType": "S"
+                    }
+                ],
+                "BillingMode": "PAY_PER_REQUEST",
+                "TimeToLiveSpecification": {
+                    "AttributeName": "Expire",
+                    "Enabled": true
+                },
+                "StreamSpecification": {
+                    "StreamViewType": "NEW_AND_OLD_IMAGES"
+                }
+            }
+        }
+    }
+}

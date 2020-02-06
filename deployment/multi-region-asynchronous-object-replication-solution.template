@@ -1,0 +1,881 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "(SO0055) - %%SOLUTION_NAME%%: This solution helps AWS customers interested in implementing a multi-region, asynchronous Amazon S3 Object Replication reference implementation. Template Version 1",
+  "Metadata": {
+    "AWS::CloudFormation::Interface": {
+      "ParameterGroups": [
+        {
+          "Label": { "default": "Metrics & Dashboard Configuration" },
+          "Parameters": [ "EnableBucketMetrics", "CreateRegionalDashboards"]
+        },
+        {
+          "Label": {"default": "Source Code Location"},
+          "Parameters": ["CodeBucketBaseName"]
+        }
+      ],
+      "ParameterLabels": {
+        "EnableBucketMetrics": { "default": "Enable Bucket Metrics" },
+        "CreateRegionalDashboards": { "default": "Create Regional Dashboards" },
+        "CodeBucketBaseName": {"default": "Code Bucket Base Name"}
+      }
+    }
+  },
+  "Parameters": {
+    "CodeBucketBaseName": {
+      "Type": "String",
+      "Description": "The bucket base name (excluding -region) where the source code for Lambda functions is located. Use the default value.",
+      "Default": "%%BUCKET_NAME%%"
+    },
+    "EnableBucketMetrics": {
+      "Type": "String",
+      "Description": "Set to true if you want to enable bucket level metrics for the buckets you create. Set to false if you want to disable metrics.",
+      "Default": "true",
+      "AllowedValues": [ "true", "false" ]
+    },
+    "CreateRegionalDashboards": {
+      "Type": "String",
+      "Description": "Set to true if you want to create a CloudWatch Dasboard per region you deploy this solution to. Set false to not create regional Dashboards.",
+      "Default": "true",
+      "AllowedValues": [ "true", "false" ]
+    }
+  },
+  "Mappings": {
+    "Send": {
+      "AnonymousUsage": { "Data": "No" }
+    },
+    "Function": {
+      "MARS": {
+        "S3KeyPrefix": "%%SOLUTION_NAME%%/%%VERSION%%/"
+      }
+    }
+  },
+  "Resources": {
+
+    "MARSParallelStackSetRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/AWSKeyManagementServicePowerUser",
+          "arn:aws:iam::aws:policy/AWSLambdaFullAccess"
+        ],
+        "Policies": [
+          {
+            "PolicyName": "SNS",
+            "PolicyDocument": 
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Sid": "VisualEditor0",
+                        "Effect": "Allow",
+                        "Action": [
+                            "sns:DeleteTopic",
+                            "sns:CreateTopic",
+                            "sns:GetTopicAttributes",
+                            "sns:SetTopicAttributes"
+                        ],
+                        "Resource": {"Fn::Sub": "arn:aws:sns:*:${AWS::AccountId}:MARS-Errors"}
+                    },
+                    {
+                        "Sid": "VisualEditor1",
+                        "Effect": "Allow",
+                        "Action": "sns:ListTopics",
+                        "Resource": {"Fn::Sub": "arn:aws:sns:*:${AWS::AccountId}:*" }
+                    }
+                ]
+            }
+          },
+          {
+            "PolicyName": "KMS",
+            "PolicyDocument": 
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "kms:CreateKey",
+                    "kms:ScheduleKeyDeletion",
+                    "kms:ListAliases",
+                    "kms:CreateAlias",
+                    "kms:DeleteAlias"
+                  ],
+                  "Resource": {"Fn::Sub": "arn:aws:kms:*:${AWS::AccountId}:key/*"}
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "CloudFormation",
+            "PolicyDocument": 
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Action": [
+                            "cloudformation:CreateStack",
+                            "cloudformation:DeleteStack",
+                            "cloudformation:DescribeStacks"
+                        ],
+                        "Resource": "arn:aws:cloudformation:*:*:stack/MARS-*/*",
+                        "Effect": "Allow"
+                    }
+                ]
+            }
+          },
+          {
+            "PolicyName": "CloudWatch",
+            "PolicyDocument":
+              {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Sid": "VisualEditor0",
+                        "Effect": "Allow",
+                        "Action": [
+                          "cloudwatch:PutMetricAlarm",
+                          "cloudwatch:PutDashboard",
+                          "cloudwatch:DeleteDashboards",
+                          "cloudwatch:DescribeAlarmHistory",
+                          "cloudwatch:GetDashboard",
+                          "cloudwatch:EnableAlarmActions",
+                          "cloudwatch:DeleteAlarms",
+                          "cloudwatch:DisableAlarmActions",
+                          "cloudwatch:DescribeAlarms",
+                          "cloudwatch:SetAlarmState"
+                        ],
+                        "Resource": 
+                        ["arn:aws:cloudwatch::*:dashboard/MARS-*",
+                        "arn:aws:cloudwatch:*:alarm:MARS-*"]
+                    }
+                ]
+            }
+          },
+          {
+            "PolicyName": "DynamoDB",
+            "PolicyDocument": 
+              {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                      {
+                          "Sid": "VisualEditor0",
+                          "Effect": "Allow",
+                          "Action": [
+                              "dynamodb:CreateTable",
+                              "dynamodb:DeleteTable",
+                              "dynamodb:UpdateTimeToLive",
+                              "dynamodb:DescribeTimeToLive",             
+                              "dynamodb:DescribeLimits"
+                          ],
+                          "Resource": [
+                              {"Fn::Sub": "arn:aws:dynamodb:*:${AWS::AccountId}:table/MARS-*" },
+                              {"Fn::Sub": "arn:aws:dynamodb:*:${AWS::AccountId}:table/mars-*" }
+                          ]
+                      },
+                      {
+                          "Sid": "VisualEditor1",
+                          "Effect": "Allow",
+                          "Action": [
+                              "dynamodb:DescribeTable"
+                          ],
+                          "Resource": [
+                              {"Fn::Sub": "arn:aws:dynamodb:*:${AWS::AccountId}:table/*" }
+                          ]
+                      }
+                  ]
+              }
+          },
+          {
+            "PolicyName": "Lambda",
+            "PolicyDocument": 
+              {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                      {
+                          "Sid": "VisualEditor0",
+                          "Effect": "Allow",
+                          "Action": [
+                              "lambda:CreateFunction",
+                              "lambda:GetFunction",
+                              "lambda:DeleteFunction"
+                          ],
+                          "Resource": "arn:aws:lambda:*:*:function:MARS-*"
+                      },
+                      {
+                          "Effect": "Allow",
+                          "Action": [
+                              "lambda:GetEventSourceMapping",
+                              "lambda:DeleteEventSourceMapping",
+                              "lambda:CreateEventSourceMapping"
+                          ],
+                          "Resource": {"Fn::Sub": "arn:aws:lambda:*:${AWS::AccountId}:function:*"}
+                      }
+                  ]
+              }
+          },
+          {
+            "PolicyName": "CloudWatchLogs",
+            "PolicyDocument": 
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Sid": "VisualEditor0",
+                        "Effect": "Allow",
+                        "Action": "logs:PutLogEvents",
+                        "Resource": "arn:aws:logs:*:*:log-group:/aws/lambda/MARS-*:*:*"
+                    },
+                    {
+                        "Sid": "VisualEditor1",
+                        "Effect": "Allow",
+                        "Action": [
+                            "logs:CreateLogStream",
+                            "logs:PutLogEvents",
+                            "logs:CreateLogGroup"
+                        ],
+                        "Resource": "arn:aws:logs:*:*:log-group:/aws/lambda/MARS-*"
+                    }
+                ]
+            }
+          },
+          {
+            "PolicyName": "SQS",
+            "PolicyDocument": 
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Sid": "VisualEditor0",
+                        "Effect": "Allow",
+                        "Action": [
+                            "sqs:CreateQueue",
+                            "sqs:DeleteQueue",
+                            "sqs:GetQueueAttributes",
+                            "sqs:SetQueueAttributes"
+                        ],
+                        "Resource": "arn:aws:sqs:*:*:MARS-*"
+                    }
+                ]
+            }
+          },
+          {
+            "PolicyName": "IAM",
+            "PolicyDocument": 
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Sid": "VisualEditor0",
+                        "Effect": "Allow",
+                        "Action": "iam:PassRole",
+                        "Resource": "arn:aws:iam::*:role/MARS-*"
+                    }
+                ]
+            }
+          },
+          {
+            "PolicyName": "S3",
+            "PolicyDocument":
+              {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                      {
+                          "Sid": "VisualEditor0",
+                          "Effect": "Allow",
+                          "Action": "s3:GetObject",
+                          "Resource": "arn:aws:s3:::solutions*/%%SOLUTION_NAME%%*.zip"
+                      },
+                      {
+                          "Sid": "VisualEditor1",
+                          "Effect": "Allow",
+                          "Action": [
+                            "s3:CreateBucket",
+                            "s3:DeleteBucket",
+                            "s3:GetBucketPolicy",
+                            "s3:PutMetricsConfiguration",
+                            "s3:GetMetricsConfiguration",
+                            "s3:PutBucketNotification",
+                            "s3:GetEncryptionConfiguration",
+                            "s3:PutEncryptionConfiguration",
+                            "s3:GetBucketPublicAccessBlock",
+                            "s3:PutAccountPublicAccessBlock",
+                            "s3:PutBucketPublicAccessBlock",
+                            "s3:GetAccountPublicAccessBlock"
+                          ],
+                          "Resource": "arn:aws:s3:::mars-*"
+                      }
+                  ]
+              }
+          }
+        ],
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "lambda.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "ParallelStackSet": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "MARS-CustomResource-ParallelStackSet",
+        "Handler": "index.handler",
+        "Code": {
+          "S3Bucket": {
+            "Fn::Join": [
+              "",
+              [
+                { "Ref": "CodeBucketBaseName" },
+                "-",
+                {"Ref": "AWS::Region"}
+              ]
+            ]
+          },
+          "S3Key": {
+            "Fn::Join": [
+              "",
+              [
+                { "Fn::FindInMap": [ "Function", "MARS", "S3KeyPrefix" ] },
+                "custom-resource-parallel-stack.zip"
+              ]
+            ]
+          }
+        },
+        "Runtime": "nodejs10.x",
+        "Timeout": "900",
+        "Role": {
+          "Fn::GetAtt": [
+            "MARSParallelStackSetRole",
+            "Arn"
+          ]
+        }
+      }
+    },
+
+
+    "MARSGlobalTableRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "Policies": [
+          {
+            "PolicyName": "CanManageGlobalTables",
+            "PolicyDocument": 
+              {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                      {
+                          "Action": [
+                              "dynamodb:CreateGlobalTable",
+                              "dynamodb:UpdateGlobalTable",
+                              "dynamodb:DescribeLimits"
+                          ],
+                          "Resource": [
+                              "arn:aws:dynamodb:*:*:global-table/mars-*-journal",
+                              "arn:aws:dynamodb:*:*:table/mars-*-journal"
+                          ],
+                          "Effect": "Allow"
+                      }
+                  ]
+              }
+          }
+        ],
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+          "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
+        ],
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "lambda.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "MARSCustomResource": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "MARS-CustomResource-GlobalTable",
+        "Handler": "index.handler",
+        "Code": {
+          "S3Bucket": {
+            "Fn::Join": [
+              "",
+              [
+                { "Ref": "CodeBucketBaseName" },
+                "-",
+                {"Ref": "AWS::Region"}
+              ]
+            ]
+          },
+          "S3Key": {
+            "Fn::Join": [
+              "",
+              [
+                { "Fn::FindInMap": [ "Function", "MARS", "S3KeyPrefix" ] },
+                "custom-resource-global-table.zip"
+              ]
+            ]
+          }
+        },
+        "Runtime": "nodejs10.x",
+        "Timeout": "900",
+        "Role": {
+          "Fn::GetAtt": [
+            "MARSGlobalTableRole",
+            "Arn"
+          ]
+        }
+      }
+    },
+
+
+
+    "MARSCreateMARSBucketRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "Policies": [
+          {
+            "PolicyName": "CanManageCloudFormation",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudformation:CreateStack",
+                    "cloudformation:DescribeStacks"
+                  ],
+                  "Resource": "arn:aws:cloudformation:*:*:stack/MARS-*/*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "CanInvokeLambda",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "lambda:InvokeFunction"
+                  ],
+                  "Resource": "arn:aws:lambda:*:*:function:MARS-*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "CloudWatch",
+            "PolicyDocument": 
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Sid": "VisualEditor0",
+                        "Effect": "Allow",
+                        "Action": [
+                            "cloudwatch:GetDashboard",
+                            "cloudwatch:PutDashboard",
+                            "cloudwatch:DeleteDashboards"
+                        ],
+                        "Resource": "arn:aws:cloudwatch::*:dashboard/MARS-*"
+                    }
+                ]
+            }
+          }
+        ],
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        ],
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "lambda.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "CreateMARSBucket": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "MARS-CreateMARSBucket",
+        "Handler": "index.handler",
+        "Code": {
+          "S3Bucket": {
+            "Fn::Join": [
+              "",
+              [
+                { "Ref": "CodeBucketBaseName" },
+                "-",
+                {"Ref": "AWS::Region"}
+              ]
+            ]
+          },
+          "S3Key": {
+            "Fn::Join": [
+              "",
+              [
+                { "Fn::FindInMap": [ "Function", "MARS", "S3KeyPrefix" ] },
+                "create-mars-bucket.zip"
+              ]
+            ]
+          }
+        },
+        "Runtime": "nodejs10.x",
+        "Timeout": "900",
+        "Role": {
+          "Fn::GetAtt": [
+            "MARSCreateMARSBucketRole",
+            "Arn"
+          ]
+        },
+        "Environment": {
+          "Variables": {
+            "SupportedRegions": "us-west-1,us-west-2,ap-northeast-1,ap-northeast-2,us-east-1,eu-west-1,ap-southeast-1,us-east-2,eu-west-2,ap-southeast-2,eu-central-1",
+            "EnableBucketMetrics": { "Ref": "EnableBucketMetrics" },
+            "CreateRegionalDashboards": { "Ref": "CreateRegionalDashboards" },
+            "CodeBucketBaseName": { "Ref": "CodeBucketBaseName" },
+            "CodeKeyBase": { "Fn::FindInMap": [ "Function", "MARS", "S3KeyPrefix" ] },
+            "ParallelStackSetRoleArn": {"Fn::GetAtt": ["MARSParallelStackSetRole", "Arn"]},
+            "StreamProcessorRoleArn": {"Fn::GetAtt": ["MARSStreamProcessorRole", "Arn"]},
+            "QueueProcessorRoleArn": {"Fn::GetAtt": ["MARSQueueProcessorRole", "Arn"]}
+          }
+        }
+      }
+    },
+
+
+
+    "MARSDeleteMARSBucketRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "Policies": [
+          {
+            "PolicyName": "CanManageCloudFormation",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudformation:DeleteStack"
+                  ],
+                  "Resource": "arn:aws:cloudformation:*:*:stack/MARS-*/*"
+                }
+              ]
+            }
+          },
+          {
+             "PolicyName": "Lambda",
+             "PolicyDocument": 
+             {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Sid": "VisualEditor0",
+                        "Effect": "Allow",
+                        "Action": "lambda:InvokeFunction",
+                        "Resource": "arn:aws:lambda:*:*:function:MARS-*"
+                    }
+                ]
+            }
+          },
+          {
+            "PolicyName": "CloudWatch",
+            "PolicyDocument":
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Sid": "VisualEditor0",
+                        "Effect": "Allow",
+                        "Action": "cloudwatch:DeleteDashboards",
+                        "Resource": "arn:aws:cloudwatch::*:dashboard/MARS-*"
+                    }
+                ]
+            }
+          }
+        ],
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        ],
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "lambda.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "DeleteMARSBucket": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "MARS-DeleteMARSBucket",
+        "Handler": "index.handler",
+        "Code": {
+          "S3Bucket": {
+            "Fn::Join": [
+              "",
+              [
+                { "Ref": "CodeBucketBaseName" },
+                "-",
+                {"Ref": "AWS::Region"}
+              ]
+            ]
+          },
+          "S3Key": {
+            "Fn::Join": [
+              "",
+              [
+                { "Fn::FindInMap": [ "Function", "MARS", "S3KeyPrefix" ] },
+                "delete-mars-bucket.zip"
+              ]
+            ]
+          }
+        },
+        "Runtime": "nodejs10.x",
+        "Timeout": "900",
+        "Role": {
+          "Fn::GetAtt": [
+            "MARSDeleteMARSBucketRole",
+            "Arn"
+          ]
+        }
+      }
+    },
+
+
+
+    "MARSQueueProcessorRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "Policies": [
+          {
+            "PolicyName": "DynamoDB",
+            "PolicyDocument": 
+              {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                      {
+                          "Sid": "VisualEditor0",
+                          "Effect": "Allow",
+                          "Action": [
+                              "dynamodb:PutItem",
+                              "dynamodb:Query",
+                              "dynamodb:UpdateItem"
+                          ],
+                          "Resource": [
+                              "arn:aws:dynamodb:*:*:table/mars-*",
+                              "arn:aws:dynamodb:*:*:table/MARS-*"
+                          ]
+                      }
+                  ]
+              }
+          },
+          {
+            "PolicyName": "SQS",
+            "PolicyDocument": 
+              {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                      {
+                          "Action": [
+                              "sqs:ReceiveMessage",
+                              "sqs:DeleteMessage",
+                              "sqs:GetQueueAttributes"
+                          ],
+                          "Resource": "arn:aws:sqs:*:*:MARS-*",
+                          "Effect": "Allow",
+                          "Sid": "VisualEditor0"
+                      }
+                  ]
+              }
+          },
+          {
+            "PolicyName": "S3",
+            "PolicyDocument": 
+              {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                      {
+                          "Action": [
+                              "s3:PutObject",
+                              "s3:GetObject",
+                              "s3:AbortMultipartUpload",
+                              "s3:DeleteObject",
+                              "s3:ListMultipartUploadParts",
+                              "s3:ListBucketMultipartUploads"
+                          ],
+                          "Resource": "arn:aws:s3:::mars-*/*",
+                          "Effect": "Allow",
+                          "Sid": "VisualEditor0"
+                      }
+                  ]
+              }
+          }
+        ],
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        ],
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "lambda.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "MARSStreamProcessorRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "Policies": [
+          {
+            "PolicyName": "DynamoDB",
+            "PolicyDocument": 
+              {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                      {
+                          "Action": [
+                              "dynamodb:DescribeStream",
+                              "dynamodb:GetRecords",
+                              "dynamodb:GetShardIterator",
+                              "dynamodb:ListStreams"
+                          ],
+                          "Resource": [
+                              "arn:aws:dynamodb:*:*:table/mars-*-journal/stream/*"
+                          ],
+                          "Effect": "Allow",
+                          "Sid": "VisualEditor0"
+                      },
+                      {
+                          "Sid": "Sid2",
+                          "Effect": "Allow",
+                          "Action": [
+                              "dynamodb:PutItem",
+                              "dynamodb:Query",
+                              "dynamodb:UpdateItem"
+                          ],
+                          "Resource": [
+                              "arn:aws:dynamodb:*:*:table/mars-*",
+                              "arn:aws:dynamodb:*:*:table/MARS-*"
+                          ]
+                      }
+                  ]
+              }
+          },
+          {
+            "PolicyName": "S3",
+            "PolicyDocument": 
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                          "Action": [
+                              "s3:PutObject",
+                              "s3:GetObject",
+                              "s3:AbortMultipartUpload",
+                              "s3:DeleteObject",
+                              "s3:ListMultipartUploadParts",
+                              "s3:ListBucketMultipartUploads"
+                          ],
+                          "Resource": "arn:aws:s3:::mars-*/*",
+                          "Effect": "Allow",
+                          "Sid": "VisualEditor0"
+                      }
+                ]
+            }
+          },
+          {
+            "PolicyName": "SQS",
+            "PolicyDocument": 
+              {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                      {
+                          "Sid": "VisualEditor0",
+                          "Effect": "Allow",
+                          "Action": "sqs:SendMessage",
+                          "Resource": "arn:aws:sqs:*:*:MARS-*"
+                      }
+                  ]
+              }
+          }
+        ],
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        ],
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "lambda.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  "Outputs": {
+  }
+}
